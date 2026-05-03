@@ -18,6 +18,17 @@
       <input type="text" id="msg-input" placeholder="Type a message..." autocomplete="off">
       <button id="send-btn">Send</button>
     </footer>
+
+    <div id="tool-modal" class="modal hidden">
+      <div class="modal-content">
+        <div class="modal-header">Tool Approval (<span id="tool-count">0</span>)</div>
+        <div id="tool-list"></div>
+        <div class="modal-actions">
+          <button id="approve-all" class="btn-approve">Approve All</button>
+          <button id="reject-all" class="btn-reject">Reject All</button>
+        </div>
+      </div>
+    </div>
   </div>
   <script src="app.js"></script>
 </body>

@@ -131,3 +131,120 @@ html, body {
 #send-btn:active:not(:disabled) {
   background: #06ad56;
 }
+
+.modal {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal.hidden {
+  display: none;
+}
+
+.modal-content {
+  background: #fff;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 400px;
+  overflow: hidden;
+}
+
+.modal-header {
+  padding: 14px 16px;
+  font-weight: 600;
+  font-size: 16px;
+  border-bottom: 1px solid #eee;
+}
+
+#tool-list {
+  padding: 12px 16px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.tool-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid #f5f5f5;
+}
+
+.tool-item:last-child {
+  border-bottom: none;
+}
+
+.tool-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.tool-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: #333;
+}
+
+.tool-input {
+  font-size: 12px;
+  color: #888;
+  word-break: break-all;
+  margin-top: 2px;
+}
+
+.tool-buttons {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.tool-buttons button {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btn-approve-item {
+  background: #07c160;
+  color: #fff;
+}
+
+.btn-reject-item {
+  background: #e5e5e5;
+  color: #666;
+}
+
+.modal-actions {
+  display: flex;
+  padding: 12px 16px;
+  gap: 10px;
+  border-top: 1px solid #eee;
+}
+
+.modal-actions button {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-approve {
+  background: #07c160;
+  color: #fff;
+}
+
+.btn-reject {
+  background: #e5e5e5;
+  color: #666;
+}

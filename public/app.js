@@ -70,6 +70,9 @@
         case 'notify':
           playBeep();
           break;
+        case 'tool_request':
+          handleToolRequest(msg.requests);
+          break;
       }
     };
 
@@ -149,6 +152,96 @@
     }
     scrollToBottom();
   }
+
+  var toolModal = document.getElementById('tool-modal');
+  var toolList = document.getElementById('tool-list');
+  var toolCount = document.getElementById('tool-count');
+  var approveAllBtn = document.getElementById('approve-all');
+  var rejectAllBtn = document.getElementById('reject-all');
+  var pendingToolRequests = [];
+
+  function handleToolRequest(requests) {
+    pendingToolRequests = requests;
+    toolCount.textContent = requests.length;
+    toolList.innerHTML = '';
+
+    for (var i = 0; i < requests.length; i++) {
+      var r = requests[i];
+      var item = document.createElement('div');
+      item.className = 'tool-item';
+      item.setAttribute('data-id', r.id);
+
+      var info = document.createElement('div');
+      info.className = 'tool-info';
+
+      var name = document.createElement('div');
+      name.className = 'tool-name';
+      name.textContent = r.tool;
+
+      var input = document.createElement('div');
+      input.className = 'tool-input';
+      input.textContent = r.input;
+
+      info.appendChild(name);
+      info.appendChild(input);
+
+      var buttons = document.createElement('div');
+      buttons.className = 'tool-buttons';
+
+      var approveBtn = document.createElement('button');
+      approveBtn.className = 'btn-approve-item';
+      approveBtn.textContent = 'OK';
+      approveBtn.onclick = (function(id) {
+        return function() { respondTool(id, true); };
+      })(r.id);
+
+      var rejectBtn = document.createElement('button');
+      rejectBtn.className = 'btn-reject-item';
+      rejectBtn.textContent = 'NO';
+      rejectBtn.onclick = (function(id) {
+        return function() { respondTool(id, false); };
+      })(r.id);
+
+      buttons.appendChild(approveBtn);
+      buttons.appendChild(rejectBtn);
+
+      item.appendChild(info);
+      item.appendChild(buttons);
+      toolList.appendChild(item);
+    }
+
+    toolModal.classList.remove('hidden');
+    setEnabled(false);
+  }
+
+  function respondTool(id, approved) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'tool_response', id: id, approved: approved }));
+
+    // Remove item from list
+    var item = toolList.querySelector('[data-id="' + id + '"]');
+    if (item) item.remove();
+
+    // If no more items, close modal
+    if (toolList.children.length === 0) {
+      toolModal.classList.add('hidden');
+      setEnabled(true);
+    }
+  }
+
+  approveAllBtn.onclick = function() {
+    for (var i = 0; i < pendingToolRequests.length; i++) {
+      respondTool(pendingToolRequests[i].id, true);
+    }
+    pendingToolRequests = [];
+  };
+
+  rejectAllBtn.onclick = function() {
+    for (var i = 0; i < pendingToolRequests.length; i++) {
+      respondTool(pendingToolRequests[i].id, false);
+    }
+    pendingToolRequests = [];
+  };
 
   function sendMessage() {
     var text = inputEl.value.trim();
