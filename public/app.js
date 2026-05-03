@@ -10,6 +10,30 @@
   var currentAiBubble = null;
   var currentAiText = '';
 
+  var audioCtx = null;
+
+  function initAudio() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
+  }
+
+  function playBeep() {
+    if (!audioCtx) return;
+    var osc = audioCtx.createOscillator();
+    var gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.frequency.value = 880;
+    gain.gain.value = 0.3;
+    osc.start(audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
+    osc.stop(audioCtx.currentTime + 0.2);
+  }
+
   function connect() {
     var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     ws = new WebSocket(protocol + '//' + location.host);
@@ -98,6 +122,7 @@
     currentAiBubble = null;
     currentAiText = '';
     scrollToBottom();
+    playBeep();
   }
 
   function handleError(errMsg) {
@@ -163,6 +188,9 @@
       inputEl.focus();
     }
   }
+
+  document.addEventListener('touchstart', initAudio, { once: true });
+  document.addEventListener('click', initAudio, { once: true });
 
   sendBtn.addEventListener('click', sendMessage);
   inputEl.addEventListener('keydown', function(e) {
