@@ -120,10 +120,81 @@
     }
   }
 
+  function detectOptions(text) {
+    var lines = text.split('\n');
+    var optionLines = [];
+    var prefixLines = [];
+    var foundOptions = false;
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      var match = line.match(/^(\d+)\.\s+(.+)/);
+      if (match) {
+        foundOptions = true;
+        optionLines.push({ num: match[1], text: match[2], full: line });
+      } else if (foundOptions) {
+        break;
+      } else {
+        prefixLines.push(line);
+      }
+    }
+
+    if (optionLines.length < 2) return null;
+    return { prefix: prefixLines.join('\n'), options: optionLines };
+  }
+
+  function renderOptions(result, prefix) {
+    var container = document.createElement('div');
+    container.className = 'msg ai';
+
+    if (prefix && prefix.trim()) {
+      var prefixBubble = document.createElement('div');
+      prefixBubble.className = 'bubble';
+      prefixBubble.textContent = prefix;
+      container.appendChild(prefixBubble);
+    }
+
+    var optionGroup = document.createElement('div');
+    optionGroup.className = 'option-group';
+
+    for (var i = 0; i < result.options.length; i++) {
+      var opt = result.options[i];
+      var btn = document.createElement('button');
+      btn.className = 'option-btn';
+      btn.textContent = opt.full;
+      btn.setAttribute('data-option', opt.num);
+      btn.onclick = (function(num) {
+        return function() {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'select_option', content: num }));
+            var allBtns = optionGroup.querySelectorAll('.option-btn');
+            for (var j = 0; j < allBtns.length; j++) {
+              allBtns[j].disabled = true;
+              allBtns[j].className = 'option-btn disabled';
+            }
+            addMessage(num, 'user');
+          }
+        };
+      })(opt.num);
+      optionGroup.appendChild(btn);
+    }
+
+    container.appendChild(optionGroup);
+    messagesEl.appendChild(container);
+    scrollToBottom();
+    return container;
+  }
+
   function handleDone(fullText) {
     if (currentAiBubble && fullText) {
-      var bubbleEl = currentAiBubble.querySelector('.bubble');
-      bubbleEl.textContent = fullText;
+      var result = detectOptions(fullText);
+      if (result) {
+        currentAiBubble.remove();
+        renderOptions(result, result.prefix);
+      } else {
+        var bubbleEl = currentAiBubble.querySelector('.bubble');
+        bubbleEl.textContent = fullText;
+      }
     }
     currentAiBubble = null;
     currentAiText = '';
