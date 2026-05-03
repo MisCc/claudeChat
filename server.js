@@ -2,11 +2,79 @@ const express = require('express');
 const http = require('http');
 const os = require('os');
 const path = require('path');
+const { spawn } = require('child_process');
+const readline = require('readline');
 
 const app = express();
 const server = http.createServer(app);
 
 app.use(express.static(path.join(__dirname, 'public')));
+
+function callClaude(ws, content) {
+  isProcessing = true;
+  ws.send(JSON.stringify({ type: 'status', content: 'thinking' }));
+
+  const args = ['-p', content, '--output-format', 'stream-json'];
+  if (currentSessionId) {
+    args.push('--resume', currentSessionId);
+  }
+
+  const proc = spawn('claude', args, { shell: true });
+  let fullResponse = '';
+  let timedOut = false;
+
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    proc.kill();
+    ws.send(JSON.stringify({ type: 'error', content: 'Claude timed out after 5 minutes' }));
+    ws.send(JSON.stringify({ type: 'status', content: 'ready' }));
+    isProcessing = false;
+  }, 5 * 60 * 1000);
+
+  const rl = readline.createInterface({ input: proc.stdout });
+
+  rl.on('line', (line) => {
+    if (timedOut) return;
+    try {
+      const event = JSON.parse(line);
+      if (event.type === 'assistant' && event.message && event.message.content) {
+        for (const block of event.message.content) {
+          if (block.type === 'text' && block.text) {
+            fullResponse += block.text;
+            ws.send(JSON.stringify({ type: 'stream', content: block.text }));
+          }
+        }
+      }
+      if (event.type === 'result') {
+        if (event.session_id) {
+          currentSessionId = event.session_id;
+        }
+      }
+    } catch (e) {
+      // Non-JSON line, ignore
+    }
+  });
+
+  proc.stderr.on('data', (data) => {
+    console.error('Claude stderr:', data.toString());
+  });
+
+  proc.on('close', (code) => {
+    clearTimeout(timeout);
+    if (!timedOut) {
+      ws.send(JSON.stringify({ type: 'done', content: fullResponse }));
+      ws.send(JSON.stringify({ type: 'status', content: 'ready' }));
+    }
+    isProcessing = false;
+  });
+
+  proc.on('error', (err) => {
+    clearTimeout(timeout);
+    ws.send(JSON.stringify({ type: 'error', content: 'Failed to start Claude CLI: ' + err.message }));
+    ws.send(JSON.stringify({ type: 'status', content: 'ready' }));
+    isProcessing = false;
+  });
+}
 
 const { WebSocketServer } = require('ws');
 const wss = new WebSocketServer({ server });
@@ -33,11 +101,7 @@ wss.on('connection', (ws) => {
         ws.send(JSON.stringify({ type: 'error', content: 'AI is still processing, please wait' }));
         return;
       }
-      // Placeholder - will call Claude CLI in next task
-      ws.send(JSON.stringify({ type: 'status', content: 'thinking' }));
-      ws.send(JSON.stringify({ type: 'stream', content: 'Echo: ' + msg.content }));
-      ws.send(JSON.stringify({ type: 'done', content: 'Echo: ' + msg.content }));
-      ws.send(JSON.stringify({ type: 'status', content: 'ready' }));
+      callClaude(ws, msg.content);
     }
   });
 
@@ -61,9 +125,36 @@ function getLanIp() {
 const PORT = process.env.PORT || 3000;
 const lanIp = getLanIp();
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n  Server running at:`);
-  console.log(`  Local:   http://localhost:${PORT}`);
-  console.log(`  LAN:     http://${lanIp}:${PORT}`);
-  console.log(`\n  Waiting for QR code and WebSocket...\n`);
-});
+function checkClaudeCli() {
+  return new Promise((resolve) => {
+    const proc = spawn('claude', ['--version'], { shell: true });
+    let output = '';
+    proc.stdout.on('data', (d) => { output += d; });
+    proc.on('close', (code) => {
+      if (code === 0) {
+        console.log('  Claude CLI detected: ' + output.trim());
+        resolve(true);
+      } else {
+        console.error('\n  WARNING: Claude CLI not found or returned error.');
+        console.error('  Please install Claude CLI first.\n');
+        resolve(false);
+      }
+    });
+    proc.on('error', () => {
+      console.error('\n  WARNING: Claude CLI not found.');
+      console.error('  Please install Claude CLI first.\n');
+      resolve(false);
+    });
+  });
+}
+
+(async () => {
+  await checkClaudeCli();
+
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n  Server running at:`);
+    console.log(`  Local:   http://localhost:${PORT}`);
+    console.log(`  LAN:     http://${lanIp}:${PORT}`);
+    console.log('');
+  });
+})();
