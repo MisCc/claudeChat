@@ -98,11 +98,69 @@ const wss = new WebSocketServer({ server });
 
 let currentSessionId = null;
 
-// Parse --session-id from command line
-const sessionIdx = process.argv.indexOf('--session-id');
-if (sessionIdx !== -1 && process.argv[sessionIdx + 1]) {
-  currentSessionId = process.argv[sessionIdx + 1];
-  console.log('  Resuming session: ' + currentSessionId);
+function listSessions() {
+  const sessionsDir = path.join(os.homedir(), '.claude', 'sessions');
+  try {
+    const files = require('fs').readdirSync(sessionsDir);
+    const sessions = [];
+    for (const file of files) {
+      if (!file.endsWith('.json')) continue;
+      try {
+        const data = JSON.parse(require('fs').readFileSync(path.join(sessionsDir, file), 'utf8'));
+        if (data.sessionId) {
+          sessions.push({
+            sessionId: data.sessionId,
+            cwd: data.cwd || '',
+            startedAt: data.startedAt || 0,
+          });
+        }
+      } catch (e) {}
+    }
+    sessions.sort((a, b) => b.startedAt - a.startedAt);
+    return sessions.slice(0, 10);
+  } catch (e) {
+    return [];
+  }
+}
+
+function selectSession() {
+  return new Promise((resolve) => {
+    // Check --session-id flag first
+    const sessionIdx = process.argv.indexOf('--session-id');
+    if (sessionIdx !== -1 && process.argv[sessionIdx + 1]) {
+      resolve(sessionIdx + 1);
+      return;
+    }
+
+    const sessions = listSessions();
+    if (sessions.length === 0) {
+      console.log('  No existing sessions found. Starting new session.\n');
+      resolve(null);
+      return;
+    }
+
+    console.log('\n  Available sessions:\n');
+    for (let i = 0; i < sessions.length; i++) {
+      const s = sessions[i];
+      const date = new Date(s.startedAt);
+      const timeStr = date.toLocaleString();
+      const cwdShort = s.cwd.replace(/^.*[\\\/]/, '');
+      console.log(`    [${i + 1}] ${s.sessionId}`);
+      console.log(`        ${timeStr}  (${cwdShort})`);
+    }
+    console.log(`\n    [0] New session\n`);
+
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question('  Select session number: ', (answer) => {
+      rl.close();
+      const num = parseInt(answer, 10);
+      if (num > 0 && num <= sessions.length) {
+        resolve(sessions[num - 1].sessionId);
+      } else {
+        resolve(null);
+      }
+    });
+  });
 }
 let isProcessing = false;
 let firstConnect = true;
@@ -198,6 +256,12 @@ function checkClaudeCli() {
 
 (async () => {
   await checkClaudeCli();
+
+  const selectedId = await selectSession();
+  if (selectedId) {
+    currentSessionId = selectedId;
+    console.log('  Resuming session: ' + currentSessionId);
+  }
 
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`\n  Server running at:`);
