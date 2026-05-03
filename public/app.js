@@ -67,6 +67,9 @@
         case 'history':
           handleHistory(msg.messages);
           break;
+        case 'notify':
+          playBeep();
+          break;
       }
     };
 
