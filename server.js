@@ -4,6 +4,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const readline = require('readline');
+const fs = require('fs');
 const QRCode = require('qrcode');
 
 const app = express();
@@ -12,6 +13,12 @@ const server = http.createServer(app);
 app.use(express.static(path.join(__dirname, 'public')));
 
 let messageHistory = [];
+
+function safeSend(ws, data) {
+  if (ws.readyState === 1) {
+    ws.send(data);
+  }
+}
 
 function spawnClaudeProcess(ws) {
   const args = ['--output-format', 'stream-json', '--verbose'];
@@ -27,7 +34,7 @@ function spawnClaudeProcess(ws) {
   const proc = spawn('claude', args, spawnOpts);
   const rl = readline.createInterface({ input: proc.stdout });
 
-  ws.send(JSON.stringify({ type: 'status', content: 'connecting' }));
+  safeSend(ws, JSON.stringify({ type: 'status', content: 'connecting' }));
 
   proc.stderr.on('data', (data) => {
     console.error('Claude stderr:', data.toString());
@@ -39,14 +46,15 @@ function spawnClaudeProcess(ws) {
 
   proc.on('close', (code) => {
     console.log('Claude process exited with code ' + code);
-    ws.send(JSON.stringify({ type: 'status', content: 'disconnected' }));
+    rl.close();
+    safeSend(ws, JSON.stringify({ type: 'status', content: 'disconnected' }));
     ws._claudeProc = null;
   });
 
   proc.on('error', (err) => {
     console.error('Claude process error:', err.message);
-    ws.send(JSON.stringify({ type: 'error', content: 'Failed to start Claude: ' + err.message }));
-    ws.send(JSON.stringify({ type: 'status', content: 'ready' }));
+    safeSend(ws, JSON.stringify({ type: 'error', content: 'Failed to start Claude: ' + err.message }));
+    safeSend(ws, JSON.stringify({ type: 'status', content: 'ready' }));
     ws._claudeProc = null;
   });
 
@@ -63,7 +71,7 @@ function handleClaudeOutput(ws, line) {
 
         if (block.type === 'text' && block.text) {
           fullResponse += block.text;
-          ws.send(JSON.stringify({ type: 'stream', content: block.text }));
+          safeSend(ws, JSON.stringify({ type: 'stream', content: block.text }));
         }
 
         if (block.type === 'tool_use') {
@@ -80,8 +88,8 @@ function handleClaudeOutput(ws, line) {
       if (event.session_id) {
         currentSessionId = event.session_id;
       }
-      ws.send(JSON.stringify({ type: 'done', content: fullResponse }));
-      ws.send(JSON.stringify({ type: 'status', content: 'ready' }));
+      safeSend(ws, JSON.stringify({ type: 'done', content: fullResponse }));
+      safeSend(ws, JSON.stringify({ type: 'status', content: 'ready' }));
       if (fullResponse) {
         messageHistory.push({ role: 'ai', content: fullResponse });
       }
@@ -101,7 +109,7 @@ function sendToClaude(ws, content, hidden) {
   pendingToolCalls = [];
 
   if (!hidden) {
-    ws.send(JSON.stringify({ type: 'status', content: 'thinking' }));
+    safeSend(ws, JSON.stringify({ type: 'status', content: 'thinking' }));
   }
 
   ws._claudeProc.stdin.write(content + '\n');
@@ -119,12 +127,12 @@ let currentSessionId = null;
 function listSessions() {
   const sessionsDir = path.join(os.homedir(), '.claude', 'sessions');
   try {
-    const files = require('fs').readdirSync(sessionsDir);
+    const files = fs.readdirSync(sessionsDir);
     const sessions = [];
     for (const file of files) {
       if (!file.endsWith('.json')) continue;
       try {
-        const data = JSON.parse(require('fs').readFileSync(path.join(sessionsDir, file), 'utf8'));
+        const data = JSON.parse(fs.readFileSync(path.join(sessionsDir, file), 'utf8'));
         if (data.sessionId) {
           sessions.push({
             sessionId: data.sessionId,
@@ -181,7 +189,7 @@ function selectSession() {
   });
 }
 let isProcessing = false;
-var startDir = null;
+let startDir = null;
 let pendingToolCalls = [];
 let pendingApprovalCount = 0;
 let fullResponse = '';
@@ -281,7 +289,7 @@ function parseStartDir() {
   if (dirIdx !== -1 && process.argv[dirIdx + 1]) {
     const dir = path.resolve(process.argv[dirIdx + 1]);
     try {
-      const stat = require('fs').statSync(dir);
+      const stat = fs.statSync(dir);
       if (!stat.isDirectory()) {
         console.error('\n  ERROR: --dir path is not a directory: ' + dir + '\n');
         process.exit(1);
@@ -303,7 +311,7 @@ function parseStartDir() {
     console.log('  Starting in directory: ' + startDir);
     console.log('  Session selection skipped (--dir provided).\n');
   } else {
-    var selectedId = await selectSession();
+    const selectedId = await selectSession();
     if (selectedId) {
       currentSessionId = selectedId;
       console.log('  Resuming session: ' + currentSessionId);
