@@ -66,6 +66,7 @@ function handleClaudeOutput(ws, line) {
     const event = JSON.parse(line);
 
     if (event.type === 'assistant' && event.message && event.message.content) {
+      let hasToolUse = false;
       for (let i = 0; i < event.message.content.length; i++) {
         const block = event.message.content[i];
 
@@ -75,12 +76,23 @@ function handleClaudeOutput(ws, line) {
         }
 
         if (block.type === 'tool_use') {
+          hasToolUse = true;
           pendingToolCalls.push({
             id: block.id,
             tool: block.name,
             input: JSON.stringify(block.input)
           });
         }
+      }
+
+      // If this message has tool_use, send approval request now
+      if (hasToolUse && pendingToolCalls.length > 0) {
+        safeSend(ws, JSON.stringify({
+          type: 'tool_request',
+          requests: pendingToolCalls.slice()
+        }));
+        pendingApprovalCount = pendingToolCalls.length;
+        pendingToolCalls = [];
       }
     }
 
@@ -117,6 +129,33 @@ function sendToClaude(ws, content, hidden) {
   if (!hidden && content) {
     messageHistory.push({ role: 'user', content: content });
   }
+
+  // Tool approval timeout: 5 minutes
+  if (ws._toolApprovalTimeout) clearTimeout(ws._toolApprovalTimeout);
+  ws._toolApprovalTimeout = setTimeout(function() {
+    if (pendingApprovalCount > 0) {
+      safeSend(ws, JSON.stringify({ type: 'error', content: 'Tool approval timed out' }));
+      safeSend(ws, JSON.stringify({ type: 'status', content: 'ready' }));
+      pendingApprovalCount = 0;
+      isProcessing = false;
+      if (ws._claudeProc) ws._claudeProc.kill();
+      ws._claudeProc = null;
+    }
+  }, 5 * 60 * 1000);
+}
+
+function sendToolResults(ws, results) {
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    const resultMsg = JSON.stringify({
+      type: 'tool_result',
+      tool_use_id: r.id,
+      content: r.approved ? 'Approved by user' : 'Rejected by user'
+    });
+    ws._claudeProc.stdin.write(resultMsg + '\n');
+  }
+  pendingApprovalCount = 0;
+  safeSend(ws, JSON.stringify({ type: 'status', content: 'thinking' }));
 }
 
 const { WebSocketServer } = require('ws');
@@ -233,6 +272,20 @@ wss.on('connection', (ws) => {
     if (msg.type === 'select_option') {
       if (msg.content && ws._claudeProc) {
         sendToClaude(ws, msg.content);
+      }
+    }
+
+    if (msg.type === 'tool_response' && pendingApprovalCount > 0) {
+      if (!ws._toolResponses) ws._toolResponses = [];
+      ws._toolResponses.push({
+        id: msg.id,
+        approved: msg.approved
+      });
+
+      if (ws._toolResponses.length >= pendingApprovalCount) {
+        if (ws._toolApprovalTimeout) clearTimeout(ws._toolApprovalTimeout);
+        sendToolResults(ws, ws._toolResponses);
+        ws._toolResponses = [];
       }
     }
   });
