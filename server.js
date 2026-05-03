@@ -11,9 +11,13 @@ const server = http.createServer(app);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-function callClaude(ws, content) {
+let messageHistory = [];
+
+function callClaude(ws, content, hidden) {
   isProcessing = true;
-  ws.send(JSON.stringify({ type: 'status', content: 'thinking' }));
+  if (!hidden) {
+    ws.send(JSON.stringify({ type: 'status', content: 'thinking' }));
+  }
 
   const args = ['-p', content, '--output-format', 'stream-json', '--verbose'];
   if (currentSessionId) {
@@ -43,7 +47,9 @@ function callClaude(ws, content) {
         for (const block of event.message.content) {
           if (block.type === 'text' && block.text) {
             fullResponse += block.text;
-            ws.send(JSON.stringify({ type: 'stream', content: block.text }));
+            if (!hidden) {
+              ws.send(JSON.stringify({ type: 'stream', content: block.text }));
+            }
           }
         }
       }
@@ -64,10 +70,19 @@ function callClaude(ws, content) {
   proc.on('close', (code) => {
     clearTimeout(timeout);
     if (!timedOut) {
-      ws.send(JSON.stringify({ type: 'done', content: fullResponse }));
-      ws.send(JSON.stringify({ type: 'status', content: 'ready' }));
+      if (!hidden) {
+        ws.send(JSON.stringify({ type: 'done', content: fullResponse }));
+        ws.send(JSON.stringify({ type: 'status', content: 'ready' }));
+      }
+      // Store in history
+      if (content && fullResponse) {
+        messageHistory.push({ role: 'user', content: content });
+        messageHistory.push({ role: 'ai', content: fullResponse });
+      }
     }
-    isProcessing = false;
+    if (!hidden) {
+      isProcessing = false;
+    }
   });
 
   proc.on('error', (err) => {
@@ -90,11 +105,35 @@ if (sessionIdx !== -1 && process.argv[sessionIdx + 1]) {
   console.log('  Resuming session: ' + currentSessionId);
 }
 let isProcessing = false;
+let firstConnect = true;
 
 wss.on('connection', (ws) => {
   console.log('Client connected');
 
+  // Replay history
+  if (messageHistory.length > 0) {
+    ws.send(JSON.stringify({ type: 'history', messages: messageHistory }));
+  }
+
   ws.send(JSON.stringify({ type: 'status', content: 'ready' }));
+
+  // Auto-request recap for resumed sessions on first connect
+  if (firstConnect && currentSessionId && messageHistory.length === 0) {
+    firstConnect = false;
+    setTimeout(() => {
+      callClaude(ws, '请用中文简要总结我们之前的对话内容', true);
+      // After recap completes, the hidden call stores it in history
+      // We need to send it to the client after it's done
+      const checkDone = setInterval(() => {
+        if (!isProcessing && messageHistory.length > 0) {
+          clearInterval(checkDone);
+          ws.send(JSON.stringify({ type: 'history', messages: messageHistory }));
+          ws.send(JSON.stringify({ type: 'status', content: 'ready' }));
+        }
+      }, 500);
+    }, 500);
+  }
+  firstConnect = false;
 
   ws.on('message', (data) => {
     let msg;

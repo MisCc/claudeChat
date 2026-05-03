@@ -40,6 +40,9 @@
         case 'error':
           handleError(msg.content);
           break;
+        case 'history':
+          handleHistory(msg.messages);
+          break;
       }
     };
 
@@ -106,6 +109,15 @@
       currentAiText = '';
     } else {
       addMessage('Error: ' + errMsg, 'ai', true);
+    }
+    scrollToBottom();
+  }
+
+  function handleHistory(messages) {
+    messagesEl.innerHTML = '';
+    for (var i = 0; i < messages.length; i++) {
+      var m = messages[i];
+      addMessage(m.content, m.role === 'user' ? 'user' : 'ai');
     }
     scrollToBottom();
   }
