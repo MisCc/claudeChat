@@ -4,6 +4,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const readline = require('readline');
+const QRCode = require('qrcode');
 
 const app = express();
 const server = http.createServer(app);
@@ -156,5 +157,15 @@ function checkClaudeCli() {
     console.log(`  Local:   http://localhost:${PORT}`);
     console.log(`  LAN:     http://${lanIp}:${PORT}`);
     console.log('');
+
+    const url = `http://${lanIp}:${PORT}`;
+    QRCode.toString(url, { type: 'terminal', small: true }, (err, qr) => {
+      if (err) {
+        console.log('  QR Code generation failed:', err.message);
+      } else {
+        console.log('  Scan with WeChat to connect:\n');
+        console.log(qr);
+      }
+    });
   });
 })();
