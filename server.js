@@ -13,86 +13,102 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 let messageHistory = [];
 
-function callClaude(ws, content, hidden) {
-  isProcessing = true;
-  if (!hidden) {
-    ws.send(JSON.stringify({ type: 'status', content: 'thinking' }));
-  }
-
-  const args = ['-p', content, '--output-format', 'stream-json', '--verbose'];
+function spawnClaudeProcess(ws) {
+  const args = ['--output-format', 'stream-json', '--verbose'];
   if (currentSessionId) {
     args.push('--resume', currentSessionId);
   }
 
-  var spawnOpts = { shell: true };
+  const spawnOpts = { shell: true };
   if (startDir) {
     spawnOpts.cwd = startDir;
   }
+
   const proc = spawn('claude', args, spawnOpts);
-  proc.stdin.end();
-  let fullResponse = '';
-  let timedOut = false;
-
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    proc.kill();
-    ws.send(JSON.stringify({ type: 'error', content: 'Claude timed out after 5 minutes' }));
-    ws.send(JSON.stringify({ type: 'status', content: 'ready' }));
-    isProcessing = false;
-  }, 5 * 60 * 1000);
-
   const rl = readline.createInterface({ input: proc.stdout });
 
-  rl.on('line', (line) => {
-    if (timedOut) return;
-    try {
-      const event = JSON.parse(line);
-      if (event.type === 'assistant' && event.message && event.message.content) {
-        for (const block of event.message.content) {
-          if (block.type === 'text' && block.text) {
-            fullResponse += block.text;
-            if (!hidden) {
-              ws.send(JSON.stringify({ type: 'stream', content: block.text }));
-            }
-          }
-        }
-      }
-      if (event.type === 'result') {
-        if (event.session_id) {
-          currentSessionId = event.session_id;
-        }
-      }
-    } catch (e) {
-      // Non-JSON line, ignore
-    }
-  });
+  ws.send(JSON.stringify({ type: 'status', content: 'connecting' }));
 
   proc.stderr.on('data', (data) => {
     console.error('Claude stderr:', data.toString());
   });
 
+  rl.on('line', (line) => {
+    handleClaudeOutput(ws, line);
+  });
+
   proc.on('close', (code) => {
-    clearTimeout(timeout);
-    if (!timedOut) {
-      if (!hidden) {
-        ws.send(JSON.stringify({ type: 'done', content: fullResponse }));
-        ws.send(JSON.stringify({ type: 'status', content: 'ready' }));
-      }
-      // Store in history
-      if (content && fullResponse) {
-        messageHistory.push({ role: 'user', content: content });
-        messageHistory.push({ role: 'ai', content: fullResponse });
-      }
-    }
-    isProcessing = false;
+    console.log('Claude process exited with code ' + code);
+    ws.send(JSON.stringify({ type: 'status', content: 'disconnected' }));
+    ws._claudeProc = null;
   });
 
   proc.on('error', (err) => {
-    clearTimeout(timeout);
-    ws.send(JSON.stringify({ type: 'error', content: 'Failed to start Claude CLI: ' + err.message }));
+    console.error('Claude process error:', err.message);
+    ws.send(JSON.stringify({ type: 'error', content: 'Failed to start Claude: ' + err.message }));
     ws.send(JSON.stringify({ type: 'status', content: 'ready' }));
-    isProcessing = false;
+    ws._claudeProc = null;
   });
+
+  return proc;
+}
+
+function handleClaudeOutput(ws, line) {
+  try {
+    const event = JSON.parse(line);
+
+    if (event.type === 'assistant' && event.message && event.message.content) {
+      for (let i = 0; i < event.message.content.length; i++) {
+        const block = event.message.content[i];
+
+        if (block.type === 'text' && block.text) {
+          fullResponse += block.text;
+          ws.send(JSON.stringify({ type: 'stream', content: block.text }));
+        }
+
+        if (block.type === 'tool_use') {
+          pendingToolCalls.push({
+            id: block.id,
+            tool: block.name,
+            input: JSON.stringify(block.input)
+          });
+        }
+      }
+    }
+
+    if (event.type === 'result') {
+      if (event.session_id) {
+        currentSessionId = event.session_id;
+      }
+      ws.send(JSON.stringify({ type: 'done', content: fullResponse }));
+      ws.send(JSON.stringify({ type: 'status', content: 'ready' }));
+      if (fullResponse) {
+        messageHistory.push({ role: 'ai', content: fullResponse });
+      }
+      isProcessing = false;
+      fullResponse = '';
+    }
+  } catch (e) {
+    // Non-JSON line, ignore
+  }
+}
+
+function sendToClaude(ws, content, hidden) {
+  if (!ws._claudeProc) return;
+
+  isProcessing = true;
+  fullResponse = '';
+  pendingToolCalls = [];
+
+  if (!hidden) {
+    ws.send(JSON.stringify({ type: 'status', content: 'thinking' }));
+  }
+
+  ws._claudeProc.stdin.write(content + '\n');
+
+  if (!hidden && content) {
+    messageHistory.push({ role: 'user', content: content });
+  }
 }
 
 const { WebSocketServer } = require('ws');
@@ -166,35 +182,28 @@ function selectSession() {
 }
 let isProcessing = false;
 var startDir = null;
-let firstConnect = true;
+let pendingToolCalls = [];
+let pendingApprovalCount = 0;
+let fullResponse = '';
 
 wss.on('connection', (ws) => {
   console.log('Client connected');
+
+  // Spawn Claude process for this connection
+  const proc = spawnClaudeProcess(ws);
+  ws._claudeProc = proc;
 
   // Replay history
   if (messageHistory.length > 0) {
     ws.send(JSON.stringify({ type: 'history', messages: messageHistory }));
   }
 
-  ws.send(JSON.stringify({ type: 'status', content: 'ready' }));
-
-  // Auto-request recap for resumed sessions on first connect
-  if (firstConnect && currentSessionId && messageHistory.length === 0) {
-    firstConnect = false;
+  // Auto-request recap for resumed sessions
+  if (currentSessionId && messageHistory.length === 0) {
     setTimeout(() => {
-      callClaude(ws, '请用中文简要总结我们之前的对话内容', true);
-      // After recap completes, the hidden call stores it in history
-      // We need to send it to the client after it's done
-      const checkDone = setInterval(() => {
-        if (!isProcessing && messageHistory.length > 0) {
-          clearInterval(checkDone);
-          ws.send(JSON.stringify({ type: 'history', messages: messageHistory }));
-          ws.send(JSON.stringify({ type: 'status', content: 'ready' }));
-        }
-      }, 500);
+      sendToClaude(ws, '请用中文简要总结我们之前的对话内容', true);
     }, 500);
   }
-  firstConnect = false;
 
   ws.on('message', (data) => {
     let msg;
@@ -206,16 +215,26 @@ wss.on('connection', (ws) => {
     }
 
     if (msg.type === 'chat' && msg.content) {
-      if (isProcessing) {
+      if (isProcessing || pendingApprovalCount > 0) {
         ws.send(JSON.stringify({ type: 'error', content: 'AI is still processing, please wait' }));
         return;
       }
-      callClaude(ws, msg.content);
+      sendToClaude(ws, msg.content);
+    }
+
+    if (msg.type === 'select_option') {
+      if (msg.content && ws._claudeProc) {
+        sendToClaude(ws, msg.content);
+      }
     }
   });
 
   ws.on('close', () => {
     console.log('Client disconnected');
+    if (ws._claudeProc) {
+      ws._claudeProc.kill();
+      ws._claudeProc = null;
+    }
   });
 });
 
