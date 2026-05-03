@@ -24,7 +24,11 @@ function callClaude(ws, content, hidden) {
     args.push('--resume', currentSessionId);
   }
 
-  const proc = spawn('claude', args, { shell: true });
+  var spawnOpts = { shell: true };
+  if (startDir) {
+    spawnOpts.cwd = startDir;
+  }
+  const proc = spawn('claude', args, spawnOpts);
   proc.stdin.end();
   let fullResponse = '';
   let timedOut = false;
@@ -161,6 +165,7 @@ function selectSession() {
   });
 }
 let isProcessing = false;
+var startDir = null;
 let firstConnect = true;
 
 wss.on('connection', (ws) => {
@@ -252,13 +257,39 @@ function checkClaudeCli() {
   });
 }
 
+function parseStartDir() {
+  var dirIdx = process.argv.indexOf('--dir');
+  if (dirIdx !== -1 && process.argv[dirIdx + 1]) {
+    var dir = process.argv[dirIdx + 1];
+    var fs = require('fs');
+    try {
+      var stat = fs.statSync(dir);
+      if (!stat.isDirectory()) {
+        console.error('\n  ERROR: --dir path is not a directory: ' + dir + '\n');
+        process.exit(1);
+      }
+      return dir;
+    } catch (e) {
+      console.error('\n  ERROR: --dir path does not exist: ' + dir + '\n');
+      process.exit(1);
+    }
+  }
+  return null;
+}
+
 (async () => {
   await checkClaudeCli();
 
-  const selectedId = await selectSession();
-  if (selectedId) {
-    currentSessionId = selectedId;
-    console.log('  Resuming session: ' + currentSessionId);
+  startDir = parseStartDir();
+  if (startDir) {
+    console.log('  Starting in directory: ' + startDir);
+    console.log('  Session selection skipped (--dir provided).\n');
+  } else {
+    var selectedId = await selectSession();
+    if (selectedId) {
+      currentSessionId = selectedId;
+      console.log('  Resuming session: ' + currentSessionId);
+    }
   }
 
   server.listen(PORT, '0.0.0.0', () => {
@@ -267,7 +298,7 @@ function checkClaudeCli() {
     console.log(`  LAN:     http://${lanIp}:${PORT}`);
     console.log('');
 
-    const url = `http://${lanIp}:${PORT}`;
+    var url = `http://${lanIp}:${PORT}`;
     QRCode.toString(url, { type: 'terminal', small: true }, (err, qr) => {
       if (err) {
         console.log('  QR Code generation failed:', err.message);
