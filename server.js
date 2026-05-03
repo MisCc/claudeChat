@@ -80,9 +80,7 @@ function callClaude(ws, content, hidden) {
         messageHistory.push({ role: 'ai', content: fullResponse });
       }
     }
-    if (!hidden) {
-      isProcessing = false;
-    }
+    isProcessing = false;
   });
 
   proc.on('error', (err) => {

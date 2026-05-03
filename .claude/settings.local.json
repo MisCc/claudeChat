@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(timeout 5 node server.js)",
+      "Bash(git init *)"
+    ]
+  }
+}
