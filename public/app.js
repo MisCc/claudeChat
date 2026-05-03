@@ -115,9 +115,26 @@
     if (currentAiBubble) {
       currentAiText += text;
       var bubbleEl = currentAiBubble.querySelector('.bubble');
-      bubbleEl.textContent = currentAiText;
+      bubbleEl.innerHTML = formatText(currentAiText);
       scrollToBottom();
     }
+  }
+
+  function formatText(text) {
+    if (!text) return '';
+    var html = escapeHtml(text);
+    html = html.replace(/\n/g, '<br>');
+    html = html.replace(/```([\s\S]*?)```/g, '<pre class="code-block"><code>$1</code></pre>');
+    html = html.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    return html;
+  }
+
+  function escapeHtml(text) {
+    var div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
   }
 
   function detectOptions(text) {
@@ -150,7 +167,7 @@
     if (prefix && prefix.trim()) {
       var prefixBubble = document.createElement('div');
       prefixBubble.className = 'bubble';
-      prefixBubble.textContent = prefix;
+      prefixBubble.innerHTML = formatText(prefix);
       container.appendChild(prefixBubble);
     }
 
@@ -161,21 +178,33 @@
       var opt = result.options[i];
       var btn = document.createElement('button');
       btn.className = 'option-btn';
-      btn.textContent = opt.full;
       btn.setAttribute('data-option', opt.num);
-      btn.onclick = (function(num) {
+
+      var numSpan = document.createElement('span');
+      numSpan.className = 'opt-num';
+      numSpan.textContent = opt.num;
+
+      var textSpan = document.createElement('span');
+      textSpan.className = 'opt-text';
+      textSpan.textContent = opt.text;
+
+      btn.appendChild(numSpan);
+      btn.appendChild(textSpan);
+
+      btn.onclick = (function(num, btnEl) {
         return function() {
           if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'select_option', content: num }));
             var allBtns = optionGroup.querySelectorAll('.option-btn');
             for (var j = 0; j < allBtns.length; j++) {
               allBtns[j].disabled = true;
-              allBtns[j].className = 'option-btn disabled';
+              allBtns[j].classList.add('disabled');
             }
+            btnEl.classList.add('selected');
             addMessage(num, 'user');
           }
         };
-      })(opt.num);
+      })(opt.num, btn);
       optionGroup.appendChild(btn);
     }
 
@@ -193,7 +222,7 @@
         renderOptions(result, result.prefix);
       } else {
         var bubbleEl = currentAiBubble.querySelector('.bubble');
-        bubbleEl.textContent = fullText;
+        bubbleEl.innerHTML = formatText(fullText);
       }
     }
     currentAiBubble = null;
@@ -210,7 +239,15 @@
       currentAiBubble = null;
       currentAiText = '';
     } else {
-      addMessage('Error: ' + errMsg, 'ai', true);
+      var msgDiv = document.createElement('div');
+      msgDiv.className = 'msg ai';
+
+      var bubble = document.createElement('div');
+      bubble.className = 'bubble error';
+      bubble.textContent = 'Error: ' + errMsg;
+
+      msgDiv.appendChild(bubble);
+      messagesEl.appendChild(msgDiv);
     }
     scrollToBottom();
   }
@@ -229,8 +266,47 @@
   function handleToolInfo(requests) {
     for (var i = 0; i < requests.length; i++) {
       var r = requests[i];
-      addMessage('Tool: ' + r.tool + ' - ' + r.input, 'ai');
+      var inputStr = r.input;
+      try {
+        var parsed = JSON.parse(r.input);
+        inputStr = formatToolInput(r.tool, parsed);
+      } catch (e) {}
+      var toolText = '🔧 ' + r.tool + '\n' + inputStr;
+      addMessage(toolText, 'ai');
     }
+  }
+
+  function formatToolInput(toolName, input) {
+    var lines = [];
+    if (toolName === 'Bash' && input.command) {
+      lines.push('$ ' + input.command);
+    } else if (toolName === 'Read' && input.file_path) {
+      lines.push('📄 ' + input.file_path);
+    } else if (toolName === 'Write' && input.file_path) {
+      lines.push('📝 ' + input.file_path);
+    } else if (toolName === 'Edit') {
+      if (input.file_path) lines.push('📝 ' + input.file_path);
+      if (input.old_string) lines.push('旧: ' + input.old_string.substring(0, 80));
+      if (input.new_string) lines.push('新: ' + input.new_string.substring(0, 80));
+    } else if (toolName === 'Glob') {
+      if (input.pattern) lines.push('🔍 ' + input.pattern);
+    } else if (toolName === 'Grep') {
+      if (input.pattern) lines.push('🔍 ' + input.pattern);
+    } else if (toolName === 'TodoWrite' && input.todos) {
+      for (var j = 0; j < input.todos.length; j++) {
+        var t = input.todos[j];
+        var icon = t.status === 'completed' ? '✅' : t.status === 'in_progress' ? '⏳' : '⬜';
+        lines.push(icon + ' ' + t.content);
+      }
+    } else {
+      var keys = Object.keys(input);
+      for (var k = 0; k < keys.length; k++) {
+        var val = String(input[keys[k]]);
+        if (val.length > 100) val = val.substring(0, 100) + '...';
+        lines.push(keys[k] + ': ' + val);
+      }
+    }
+    return lines.join('\n');
   }
 
   function sendMessage() {
@@ -250,7 +326,11 @@
 
     var bubble = document.createElement('div');
     bubble.className = 'bubble' + (isError ? ' error' : '');
-    bubble.textContent = text;
+    if (type === 'ai') {
+      bubble.innerHTML = formatText(text);
+    } else {
+      bubble.textContent = text;
+    }
 
     msgDiv.appendChild(bubble);
     messagesEl.appendChild(msgDiv);

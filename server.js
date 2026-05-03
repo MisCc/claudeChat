@@ -20,7 +20,11 @@ function safeSend(ws, data) {
   }
 }
 
-function callClaude(ws, content, hidden) {
+const MAX_TIMEOUT_RETRIES = 3;
+const TIMEOUT_MS = 5 * 60 * 1000;
+
+function callClaude(ws, content, hidden, retryCount) {
+  if (retryCount === undefined) retryCount = 0;
   isProcessing = true;
   if (!hidden) {
     safeSend(ws, JSON.stringify({ type: 'status', content: 'thinking' }));
@@ -44,10 +48,18 @@ function callClaude(ws, content, hidden) {
   const timeout = setTimeout(() => {
     timedOut = true;
     proc.kill();
-    safeSend(ws, JSON.stringify({ type: 'error', content: 'Claude timed out after 5 minutes' }));
-    safeSend(ws, JSON.stringify({ type: 'status', content: 'ready' }));
-    isProcessing = false;
-  }, 5 * 60 * 1000);
+    if (retryCount < MAX_TIMEOUT_RETRIES) {
+      console.log('Claude timed out, auto-retrying (attempt ' + (retryCount + 1) + '/' + MAX_TIMEOUT_RETRIES + ')...');
+      if (!hidden) {
+        safeSend(ws, JSON.stringify({ type: 'status', content: 'thinking' }));
+      }
+      callClaude(ws, content, hidden, retryCount + 1);
+    } else {
+      safeSend(ws, JSON.stringify({ type: 'error', content: 'Claude timed out after ' + MAX_TIMEOUT_RETRIES + ' retries' }));
+      safeSend(ws, JSON.stringify({ type: 'status', content: 'ready' }));
+      isProcessing = false;
+    }
+  }, TIMEOUT_MS);
 
   const rl = readline.createInterface({ input: proc.stdout });
 
