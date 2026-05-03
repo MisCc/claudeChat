@@ -82,6 +82,13 @@ const { WebSocketServer } = require('ws');
 const wss = new WebSocketServer({ server });
 
 let currentSessionId = null;
+
+// Parse --session-id from command line
+const sessionIdx = process.argv.indexOf('--session-id');
+if (sessionIdx !== -1 && process.argv[sessionIdx + 1]) {
+  currentSessionId = process.argv[sessionIdx + 1];
+  console.log('  Resuming session: ' + currentSessionId);
+}
 let isProcessing = false;
 
 wss.on('connection', (ws) => {
