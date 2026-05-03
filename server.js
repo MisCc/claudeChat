@@ -258,12 +258,11 @@ function checkClaudeCli() {
 }
 
 function parseStartDir() {
-  var dirIdx = process.argv.indexOf('--dir');
+  const dirIdx = process.argv.indexOf('--dir');
   if (dirIdx !== -1 && process.argv[dirIdx + 1]) {
-    var dir = process.argv[dirIdx + 1];
-    var fs = require('fs');
+    const dir = path.resolve(process.argv[dirIdx + 1]);
     try {
-      var stat = fs.statSync(dir);
+      const stat = require('fs').statSync(dir);
       if (!stat.isDirectory()) {
         console.error('\n  ERROR: --dir path is not a directory: ' + dir + '\n');
         process.exit(1);
@@ -298,7 +297,7 @@ function parseStartDir() {
     console.log(`  LAN:     http://${lanIp}:${PORT}`);
     console.log('');
 
-    var url = `http://${lanIp}:${PORT}`;
+    const url = `http://${lanIp}:${PORT}`;
     QRCode.toString(url, { type: 'terminal', small: true }, (err, qr) => {
       if (err) {
         console.log('  QR Code generation failed:', err.message);
