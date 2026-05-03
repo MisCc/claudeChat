@@ -8,6 +8,44 @@ const server = http.createServer(app);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+const { WebSocketServer } = require('ws');
+const wss = new WebSocketServer({ server });
+
+let currentSessionId = null;
+let isProcessing = false;
+
+wss.on('connection', (ws) => {
+  console.log('Client connected');
+
+  ws.send(JSON.stringify({ type: 'status', content: 'ready' }));
+
+  ws.on('message', (data) => {
+    let msg;
+    try {
+      msg = JSON.parse(data);
+    } catch (e) {
+      ws.send(JSON.stringify({ type: 'error', content: 'Invalid message format' }));
+      return;
+    }
+
+    if (msg.type === 'chat' && msg.content) {
+      if (isProcessing) {
+        ws.send(JSON.stringify({ type: 'error', content: 'AI is still processing, please wait' }));
+        return;
+      }
+      // Placeholder - will call Claude CLI in next task
+      ws.send(JSON.stringify({ type: 'status', content: 'thinking' }));
+      ws.send(JSON.stringify({ type: 'stream', content: 'Echo: ' + msg.content }));
+      ws.send(JSON.stringify({ type: 'done', content: 'Echo: ' + msg.content }));
+      ws.send(JSON.stringify({ type: 'status', content: 'ready' }));
+    }
+  });
+
+  ws.on('close', () => {
+    console.log('Client disconnected');
+  });
+});
+
 function getLanIp() {
   const interfaces = os.networkInterfaces();
   for (const name of Object.keys(interfaces)) {
