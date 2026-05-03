@@ -15,12 +15,13 @@ function callClaude(ws, content) {
   isProcessing = true;
   ws.send(JSON.stringify({ type: 'status', content: 'thinking' }));
 
-  const args = ['-p', content, '--output-format', 'stream-json'];
+  const args = ['-p', content, '--output-format', 'stream-json', '--verbose'];
   if (currentSessionId) {
     args.push('--resume', currentSessionId);
   }
 
   const proc = spawn('claude', args, { shell: true });
+  proc.stdin.end();
   let fullResponse = '';
   let timedOut = false;
 
@@ -123,7 +124,7 @@ function getLanIp() {
   return '127.0.0.1';
 }
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 const lanIp = getLanIp();
 
 function checkClaudeCli() {
