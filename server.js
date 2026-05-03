@@ -20,8 +20,13 @@ function safeSend(ws, data) {
   }
 }
 
-function spawnClaudeProcess(ws) {
-  const args = ['--output-format', 'stream-json', '--verbose'];
+function callClaude(ws, content, hidden) {
+  isProcessing = true;
+  if (!hidden) {
+    safeSend(ws, JSON.stringify({ type: 'status', content: 'thinking' }));
+  }
+
+  const args = ['-p', content, '--output-format', 'stream-json', '--verbose'];
   if (currentSessionId) {
     args.push('--resume', currentSessionId);
   }
@@ -32,130 +37,73 @@ function spawnClaudeProcess(ws) {
   }
 
   const proc = spawn('claude', args, spawnOpts);
+  proc.stdin.end();
+  let fullResponse = '';
+  let timedOut = false;
+
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    proc.kill();
+    safeSend(ws, JSON.stringify({ type: 'error', content: 'Claude timed out after 5 minutes' }));
+    safeSend(ws, JSON.stringify({ type: 'status', content: 'ready' }));
+    isProcessing = false;
+  }, 5 * 60 * 1000);
+
   const rl = readline.createInterface({ input: proc.stdout });
 
-  safeSend(ws, JSON.stringify({ type: 'status', content: 'connecting' }));
+  rl.on('line', (line) => {
+    if (timedOut) return;
+    try {
+      const event = JSON.parse(line);
+      if (event.type === 'assistant' && event.message && event.message.content) {
+        for (const block of event.message.content) {
+          if (block.type === 'text' && block.text) {
+            fullResponse += block.text;
+            if (!hidden) {
+              safeSend(ws, JSON.stringify({ type: 'stream', content: block.text }));
+            }
+          }
+          if (block.type === 'tool_use') {
+            safeSend(ws, JSON.stringify({
+              type: 'tool_request',
+              requests: [{ id: block.id, tool: block.name, input: JSON.stringify(block.input) }]
+            }));
+          }
+        }
+      }
+      if (event.type === 'result') {
+        if (event.session_id) {
+          currentSessionId = event.session_id;
+        }
+      }
+    } catch (e) {
+      // Non-JSON line, ignore
+    }
+  });
 
   proc.stderr.on('data', (data) => {
     console.error('Claude stderr:', data.toString());
   });
 
-  rl.on('line', (line) => {
-    handleClaudeOutput(ws, line);
-  });
-
   proc.on('close', (code) => {
-    console.log('Claude process exited with code ' + code);
-    rl.close();
-    safeSend(ws, JSON.stringify({ type: 'status', content: 'disconnected' }));
-    ws._claudeProc = null;
+    clearTimeout(timeout);
+    if (!timedOut) {
+      safeSend(ws, JSON.stringify({ type: 'done', content: fullResponse }));
+      safeSend(ws, JSON.stringify({ type: 'status', content: 'ready' }));
+      if (!hidden && content && fullResponse) {
+        messageHistory.push({ role: 'user', content: content });
+        messageHistory.push({ role: 'ai', content: fullResponse });
+      }
+    }
+    isProcessing = false;
   });
 
   proc.on('error', (err) => {
-    console.error('Claude process error:', err.message);
-    safeSend(ws, JSON.stringify({ type: 'error', content: 'Failed to start Claude: ' + err.message }));
+    clearTimeout(timeout);
+    safeSend(ws, JSON.stringify({ type: 'error', content: 'Failed to start Claude CLI: ' + err.message }));
     safeSend(ws, JSON.stringify({ type: 'status', content: 'ready' }));
-    ws._claudeProc = null;
+    isProcessing = false;
   });
-
-  return proc;
-}
-
-function handleClaudeOutput(ws, line) {
-  try {
-    const event = JSON.parse(line);
-
-    if (event.type === 'assistant' && event.message && event.message.content) {
-      let hasToolUse = false;
-      for (let i = 0; i < event.message.content.length; i++) {
-        const block = event.message.content[i];
-
-        if (block.type === 'text' && block.text) {
-          fullResponse += block.text;
-          safeSend(ws, JSON.stringify({ type: 'stream', content: block.text }));
-        }
-
-        if (block.type === 'tool_use') {
-          hasToolUse = true;
-          pendingToolCalls.push({
-            id: block.id,
-            tool: block.name,
-            input: JSON.stringify(block.input)
-          });
-        }
-      }
-
-      // If this message has tool_use, send approval request now
-      if (hasToolUse && pendingToolCalls.length > 0) {
-        safeSend(ws, JSON.stringify({
-          type: 'tool_request',
-          requests: pendingToolCalls.slice()
-        }));
-        pendingApprovalCount = pendingToolCalls.length;
-        pendingToolCalls = [];
-      }
-    }
-
-    if (event.type === 'result') {
-      if (event.session_id) {
-        currentSessionId = event.session_id;
-      }
-      safeSend(ws, JSON.stringify({ type: 'done', content: fullResponse }));
-      safeSend(ws, JSON.stringify({ type: 'status', content: 'ready' }));
-      if (fullResponse) {
-        messageHistory.push({ role: 'ai', content: fullResponse });
-      }
-      isProcessing = false;
-      fullResponse = '';
-    }
-  } catch (e) {
-    // Non-JSON line, ignore
-  }
-}
-
-function sendToClaude(ws, content, hidden) {
-  if (!ws._claudeProc) return;
-
-  isProcessing = true;
-  fullResponse = '';
-  pendingToolCalls = [];
-
-  if (!hidden) {
-    safeSend(ws, JSON.stringify({ type: 'status', content: 'thinking' }));
-  }
-
-  ws._claudeProc.stdin.write(content + '\n');
-
-  if (!hidden && content) {
-    messageHistory.push({ role: 'user', content: content });
-  }
-
-  // Tool approval timeout: 5 minutes
-  if (ws._toolApprovalTimeout) clearTimeout(ws._toolApprovalTimeout);
-  ws._toolApprovalTimeout = setTimeout(function() {
-    if (pendingApprovalCount > 0) {
-      safeSend(ws, JSON.stringify({ type: 'error', content: 'Tool approval timed out' }));
-      safeSend(ws, JSON.stringify({ type: 'status', content: 'ready' }));
-      pendingApprovalCount = 0;
-      isProcessing = false;
-      if (ws._claudeProc) ws._claudeProc.kill();
-      ws._claudeProc = null;
-    }
-  }, 5 * 60 * 1000);
-}
-
-function sendToolResults(ws, results) {
-  for (let i = 0; i < results.length; i++) {
-    const r = results[i];
-    const resultMsg = JSON.stringify({
-      type: 'tool_result',
-      tool_use_id: r.id,
-      content: r.approved ? 'Approved by user' : 'Rejected by user'
-    });
-    ws._claudeProc.stdin.write(resultMsg + '\n');
-  }
-  pendingApprovalCount = 0;
-  safeSend(ws, JSON.stringify({ type: 'status', content: 'thinking' }));
 }
 
 const { WebSocketServer } = require('ws');
@@ -190,7 +138,6 @@ function listSessions() {
 
 function selectSession() {
   return new Promise((resolve) => {
-    // Check --session-id flag first
     const sessionIdx = process.argv.indexOf('--session-id');
     if (sessionIdx !== -1 && process.argv[sessionIdx + 1]) {
       resolve(sessionIdx + 1);
@@ -227,75 +174,61 @@ function selectSession() {
     });
   });
 }
+
 let isProcessing = false;
 let startDir = null;
-let pendingToolCalls = [];
-let pendingApprovalCount = 0;
-let fullResponse = '';
+let firstConnect = true;
 
 wss.on('connection', (ws) => {
   console.log('Client connected');
 
-  // Spawn Claude process for this connection
-  const proc = spawnClaudeProcess(ws);
-  ws._claudeProc = proc;
-
-  // Replay history
   if (messageHistory.length > 0) {
-    ws.send(JSON.stringify({ type: 'history', messages: messageHistory }));
+    safeSend(ws, JSON.stringify({ type: 'history', messages: messageHistory }));
   }
 
-  // Auto-request recap for resumed sessions
-  if (currentSessionId && messageHistory.length === 0) {
+  safeSend(ws, JSON.stringify({ type: 'status', content: 'ready' }));
+
+  if (firstConnect && currentSessionId && messageHistory.length === 0) {
+    firstConnect = false;
     setTimeout(() => {
-      sendToClaude(ws, '请用中文简要总结我们之前的对话内容', true);
+      callClaude(ws, '请用中文简要总结我们之前的对话内容', true);
+      const checkDone = setInterval(() => {
+        if (!isProcessing && messageHistory.length > 0) {
+          clearInterval(checkDone);
+          safeSend(ws, JSON.stringify({ type: 'history', messages: messageHistory }));
+          safeSend(ws, JSON.stringify({ type: 'status', content: 'ready' }));
+        }
+      }, 500);
     }, 500);
   }
+  firstConnect = false;
 
   ws.on('message', (data) => {
     let msg;
     try {
       msg = JSON.parse(data);
     } catch (e) {
-      ws.send(JSON.stringify({ type: 'error', content: 'Invalid message format' }));
+      safeSend(ws, JSON.stringify({ type: 'error', content: 'Invalid message format' }));
       return;
     }
 
     if (msg.type === 'chat' && msg.content) {
-      if (isProcessing || pendingApprovalCount > 0) {
-        ws.send(JSON.stringify({ type: 'error', content: 'AI is still processing, please wait' }));
+      if (isProcessing) {
+        safeSend(ws, JSON.stringify({ type: 'error', content: 'AI is still processing, please wait' }));
         return;
       }
-      sendToClaude(ws, msg.content);
+      callClaude(ws, msg.content);
     }
 
     if (msg.type === 'select_option') {
-      if (msg.content && ws._claudeProc) {
-        sendToClaude(ws, msg.content);
-      }
-    }
-
-    if (msg.type === 'tool_response' && pendingApprovalCount > 0) {
-      if (!ws._toolResponses) ws._toolResponses = [];
-      ws._toolResponses.push({
-        id: msg.id,
-        approved: msg.approved
-      });
-
-      if (ws._toolResponses.length >= pendingApprovalCount) {
-        if (ws._toolApprovalTimeout) clearTimeout(ws._toolApprovalTimeout);
-        sendToolResults(ws, ws._toolResponses);
-        ws._toolResponses = [];
+      if (msg.content && !isProcessing) {
+        callClaude(ws, msg.content);
       }
     }
   });
 
   ws.on('close', () => {
     console.log('Client disconnected');
-    if (ws._claudeProc) {
-      ws._claudeProc.kill();
-      ws._claudeProc = null;
-    }
   });
 });
 
