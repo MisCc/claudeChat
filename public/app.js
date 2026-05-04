@@ -613,4 +613,14 @@
 
   setEnabled(false);
   connect();
+
+  // ── Auto-restore last session ──
+  (function restoreOnLoad() {
+    var activeId = SessionManager.getActiveSessionId();
+    if (activeId && SessionManager.getSession(activeId)) {
+      restoreSession(activeId);
+    } else {
+      SessionManager.createSession();
+    }
+  })();
 })();
