@@ -565,7 +565,8 @@
     var session = SessionManager.getSession(id);
     if (!session) return;
 
-    var switchingFromProcessing = (processingSessionId === SessionManager.getActiveSessionId());
+    var prevActiveId = SessionManager.getActiveSessionId();
+    var switchingFromProcessing = (processingSessionId === prevActiveId);
 
     SessionManager.setActiveSessionId(id);
     messagesEl.innerHTML = '';
@@ -585,6 +586,15 @@
 
     if (session.claudeSessionId && ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'switch_session', sessionId: session.claudeSessionId }));
+    }
+
+    var lastMsg = session.messages.length > 0 ? session.messages[session.messages.length - 1] : null;
+    if (lastMsg && lastMsg.role === 'user' && processingSessionId !== id) {
+      setTimeout(function() {
+        if (ws && ws.readyState === WebSocket.OPEN && !processingSessionId) {
+          ws.send(JSON.stringify({ type: 'chat', content: '请继续' }));
+        }
+      }, 300);
     }
   }
 
