@@ -367,7 +367,7 @@
   }
 
   function handleHistory(messages) {
-    messagesEl.innerHTML = '';
+    if (messagesEl.children.length > 0) return;
     for (var i = 0; i < messages.length; i++) {
       var m = messages[i];
       addMessage(m.content, m.role === 'user' ? 'user' : 'ai');
