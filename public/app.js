@@ -519,17 +519,19 @@
       var delBtn = document.createElement('button');
       delBtn.className = 'session-delete';
       delBtn.textContent = '×';
-      delBtn.onclick = (function(id, e) {
-        e.stopPropagation();
-        SessionManager.deleteSession(id);
-        renderSessionList();
-        var activeId = SessionManager.getActiveSessionId();
-        if (activeId) {
-          restoreSession(activeId);
-        } else {
-          SessionManager.createSession();
-          messagesEl.innerHTML = '';
-        }
+      delBtn.onclick = (function(sessionId) {
+        return function(e) {
+          e.stopPropagation();
+          SessionManager.deleteSession(sessionId);
+          renderSessionList();
+          var aid = SessionManager.getActiveSessionId();
+          if (aid) {
+            restoreSession(aid);
+          } else {
+            SessionManager.createSession();
+            messagesEl.innerHTML = '';
+          }
+        };
       })(s.id);
 
       item.appendChild(title);
