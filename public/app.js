@@ -9,6 +9,7 @@
   var maxReconnectDelay = 30000;
   var currentAiBubble = null;
   var currentAiText = '';
+  var processingSessionId = null;
 
   var audioCtx = null;
 
@@ -204,12 +205,14 @@
   function handleStatus(status) {
     switch (status) {
       case 'ready':
+        processingSessionId = null;
         setStatus('Connected', true);
         setEnabled(true);
         currentAiBubble = null;
         currentAiText = '';
         break;
       case 'thinking':
+        processingSessionId = SessionManager.getActiveSessionId();
         setStatus('AI thinking...', false);
         setEnabled(false);
         currentAiText = '';
@@ -562,6 +565,8 @@
     var session = SessionManager.getSession(id);
     if (!session) return;
 
+    var switchingFromProcessing = (processingSessionId === SessionManager.getActiveSessionId());
+
     SessionManager.setActiveSessionId(id);
     messagesEl.innerHTML = '';
 
@@ -570,6 +575,13 @@
       addMessage(m.content, m.role === 'user' ? 'user' : 'ai');
     }
     scrollToBottom();
+
+    if (switchingFromProcessing && processingSessionId !== id) {
+      currentAiBubble = null;
+      currentAiText = '';
+      setStatus('Connected', true);
+      setEnabled(true);
+    }
 
     if (session.claudeSessionId && ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'switch_session', sessionId: session.claudeSessionId }));
