@@ -2,7 +2,18 @@
   "permissions": {
     "allow": [
       "Bash(timeout 5 node server.js)",
-      "Bash(git init *)"
+      "Bash(git init *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(node -c server.js)",
+      "Bash(node -c public/app.js)",
+      "Bash(node -e ' *)",
+      "Bash(timeout 20 node -e ' *)",
+      "Bash(timeout 25 node -e ' *)",
+      "Bash(timeout 30 node -e ' *)",
+      "Bash(timeout 15 node -e ' *)",
+      "Bash(timeout 10 node server.js --dir d:/workspace/agentapp)",
+      "Bash(where claude *)"
     ]
   }
 }

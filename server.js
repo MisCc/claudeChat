@@ -2,7 +2,7 @@ const express = require('express');
 const http = require('http');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, exec } = require('child_process');
 const readline = require('readline');
 const fs = require('fs');
 const QRCode = require('qrcode');
@@ -282,32 +282,52 @@ function checkClaudeCli() {
   });
 }
 
-function parseStartDir() {
-  const dirIdx = process.argv.indexOf('--dir');
-  if (dirIdx !== -1 && process.argv[dirIdx + 1]) {
-    const dir = path.resolve(process.argv[dirIdx + 1]);
-    try {
-      const stat = fs.statSync(dir);
-      if (!stat.isDirectory()) {
-        console.error('\n  ERROR: --dir path is not a directory: ' + dir + '\n');
-        process.exit(1);
-      }
-      return dir;
-    } catch (e) {
-      console.error('\n  ERROR: --dir path does not exist: ' + dir + '\n');
-      process.exit(1);
+function promptDir() {
+  return new Promise((resolve) => {
+    const cliDirIdx = process.argv.indexOf('--dir');
+    if (cliDirIdx !== -1 && process.argv[cliDirIdx + 1]) {
+      const dir = path.resolve(process.argv[cliDirIdx + 1]);
+      try {
+        if (fs.statSync(dir).isDirectory()) {
+          resolve(dir);
+          return;
+        }
+      } catch (e) {}
     }
-  }
-  return null;
+
+    console.log('\n  Enter working directory for Claude (leave empty to select session):');
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question('  Directory: ', (answer) => {
+      rl.close();
+      const dir = answer.trim();
+      if (!dir) {
+        resolve(null);
+        return;
+      }
+      const resolved = path.resolve(dir);
+      try {
+        if (!fs.statSync(resolved).isDirectory()) {
+          console.error('  ERROR: "' + resolved + '" is not a directory.\n');
+          resolve(null);
+          return;
+        }
+      } catch (e) {
+        console.error('  ERROR: Directory "' + resolved + '" does not exist.\n');
+        resolve(null);
+        return;
+      }
+      resolve(resolved);
+    });
+  });
 }
 
 (async () => {
   await checkClaudeCli();
 
-  startDir = parseStartDir();
+  startDir = await promptDir();
   if (startDir) {
     console.log('  Starting in directory: ' + startDir);
-    console.log('  Session selection skipped (--dir provided).\n');
+    console.log('  Session selection skipped.\n');
   } else {
     const selectedId = await selectSession();
     if (selectedId) {
@@ -323,12 +343,14 @@ function parseStartDir() {
     console.log('');
 
     const url = `http://${lanIp}:${PORT}`;
-    QRCode.toString(url, { type: 'terminal', small: true }, (err, qr) => {
+    const qrPath = path.join(__dirname, 'qrcode.png');
+    QRCode.toFile(qrPath, url, { type: 'png', width: 400, margin: 2 }, (err) => {
       if (err) {
         console.log('  QR Code generation failed:', err.message);
       } else {
-        console.log('  Scan with WeChat to connect:\n');
-        console.log(qr);
+        console.log('  QR Code saved to: ' + qrPath);
+        console.log('  Opening QR Code...\n');
+        exec('start "" "' + qrPath + '"');
       }
     });
   });
