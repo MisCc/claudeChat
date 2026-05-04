@@ -238,8 +238,9 @@ wss.on('connection', (ws) => {
       }
     }
 
-    if (msg.type === 'switch_session' && msg.sessionId) {
+    if (msg.type === 'switch_session' && typeof msg.sessionId === 'string' && msg.sessionId.trim()) {
       currentSessionId = msg.sessionId;
+      console.log('Session switched to: ' + currentSessionId);
       safeSend(ws, JSON.stringify({ type: 'session_switched', sessionId: currentSessionId }));
     }
   });
