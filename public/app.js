@@ -12,6 +12,112 @@
 
   var audioCtx = null;
 
+  var SessionManager = {
+    SESSIONS_KEY: 'chat_sessions',
+    ACTIVE_KEY: 'chat_active_session',
+    MAX_SESSIONS: 20,
+
+    getSessions: function() {
+      try {
+        return JSON.parse(localStorage.getItem(this.SESSIONS_KEY)) || [];
+      } catch (e) {
+        return [];
+      }
+    },
+
+    saveSessions: function(sessions) {
+      try {
+        localStorage.setItem(this.SESSIONS_KEY, JSON.stringify(sessions));
+      } catch (e) {
+        console.warn('Failed to save sessions:', e);
+      }
+    },
+
+    getActiveSessionId: function() {
+      return localStorage.getItem(this.ACTIVE_KEY);
+    },
+
+    setActiveSessionId: function(id) {
+      localStorage.setItem(this.ACTIVE_KEY, id);
+    },
+
+    getSession: function(id) {
+      var sessions = this.getSessions();
+      for (var i = 0; i < sessions.length; i++) {
+        if (sessions[i].id === id) return sessions[i];
+      }
+      return null;
+    },
+
+    createSession: function() {
+      var id = 'local-' + Date.now();
+      var session = {
+        id: id,
+        title: '新会话',
+        claudeSessionId: null,
+        messages: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+      var sessions = this.getSessions();
+      sessions.unshift(session);
+      if (sessions.length > this.MAX_SESSIONS) {
+        sessions = sessions.slice(0, this.MAX_SESSIONS);
+      }
+      this.saveSessions(sessions);
+      this.setActiveSessionId(id);
+      return session;
+    },
+
+    addMessage: function(role, content) {
+      var id = this.getActiveSessionId();
+      if (!id) return;
+      var sessions = this.getSessions();
+      for (var i = 0; i < sessions.length; i++) {
+        if (sessions[i].id === id) {
+          var session = sessions[i];
+          session.messages.push({
+            role: role,
+            content: content,
+            time: Date.now()
+          });
+          session.updatedAt = Date.now();
+          if (role === 'user' && session.messages.length === 1 && session.title === '新会话') {
+            session.title = content.substring(0, 20) + (content.length > 20 ? '...' : '');
+          }
+          this.saveSessions(sessions);
+          return;
+        }
+      }
+    },
+
+    setClaudeSessionId: function(claudeSessionId) {
+      var id = this.getActiveSessionId();
+      if (!id) return;
+      var sessions = this.getSessions();
+      for (var i = 0; i < sessions.length; i++) {
+        if (sessions[i].id === id) {
+          sessions[i].claudeSessionId = claudeSessionId;
+          this.saveSessions(sessions);
+          return;
+        }
+      }
+    },
+
+    deleteSession: function(id) {
+      var sessions = this.getSessions();
+      sessions = sessions.filter(function(s) { return s.id !== id; });
+      this.saveSessions(sessions);
+      if (this.getActiveSessionId() === id) {
+        if (sessions.length > 0) {
+          this.setActiveSessionId(sessions[0].id);
+        } else {
+          localStorage.removeItem(this.ACTIVE_KEY);
+        }
+      }
+    }
+  };
+
   function initAudio() {
     if (!audioCtx) {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
