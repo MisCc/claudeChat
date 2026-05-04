@@ -237,6 +237,11 @@ wss.on('connection', (ws) => {
         callClaude(ws, msg.content);
       }
     }
+
+    if (msg.type === 'switch_session' && msg.sessionId) {
+      currentSessionId = msg.sessionId;
+      safeSend(ws, JSON.stringify({ type: 'session_switched', sessionId: currentSessionId }));
+    }
   });
 
   ws.on('close', () => {
