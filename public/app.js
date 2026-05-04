@@ -179,6 +179,11 @@
         case 'tool_request':
           handleToolInfo(msg.requests);
           break;
+        case 'session_switched':
+          if (msg.sessionId) {
+            SessionManager.setClaudeSessionId(msg.sessionId);
+          }
+          break;
       }
     };
 
@@ -331,6 +336,9 @@
         bubbleEl.innerHTML = formatText(fullText);
       }
     }
+    if (fullText) {
+      SessionManager.addMessage('assistant', fullText);
+    }
     currentAiBubble = null;
     currentAiText = '';
     scrollToBottom();
@@ -419,6 +427,7 @@
     var text = inputEl.value.trim();
     if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
 
+    SessionManager.addMessage('user', text);
     addMessage(text, 'user');
     inputEl.value = '';
     setEnabled(false);
