@@ -461,6 +461,126 @@
     }
   }
 
+  // ── Session Drawer ──
+  var drawerEl = document.getElementById('session-drawer');
+  var drawerOverlay = document.getElementById('drawer-overlay');
+  var menuBtn = document.getElementById('menu-btn');
+  var newSessionBtn = document.getElementById('new-session-btn');
+  var sessionListEl = document.getElementById('session-list');
+
+  function openDrawer() {
+    drawerEl.classList.remove('hidden');
+    requestAnimationFrame(function() {
+      drawerEl.classList.add('open');
+    });
+    renderSessionList();
+  }
+
+  function closeDrawer() {
+    drawerEl.classList.remove('open');
+    setTimeout(function() {
+      drawerEl.classList.add('hidden');
+    }, 250);
+  }
+
+  function renderSessionList() {
+    var sessions = SessionManager.getSessions();
+    var activeId = SessionManager.getActiveSessionId();
+    sessionListEl.innerHTML = '';
+
+    if (sessions.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'session-empty';
+      empty.textContent = '暂无会话，点击 + 开始新对话';
+      sessionListEl.appendChild(empty);
+      return;
+    }
+
+    for (var i = 0; i < sessions.length; i++) {
+      var s = sessions[i];
+      var item = document.createElement('div');
+      item.className = 'session-item' + (s.id === activeId ? ' active' : '');
+      item.setAttribute('data-id', s.id);
+
+      var title = document.createElement('div');
+      title.className = 'session-title';
+      title.textContent = s.title;
+
+      var meta = document.createElement('div');
+      meta.className = 'session-meta';
+      var msgCount = s.messages.length;
+      var timeDiff = Date.now() - s.updatedAt;
+      var timeStr = timeDiff < 60000 ? '刚刚' :
+                    timeDiff < 3600000 ? Math.floor(timeDiff / 60000) + ' 分钟前' :
+                    timeDiff < 86400000 ? Math.floor(timeDiff / 3600000) + ' 小时前' :
+                    Math.floor(timeDiff / 86400000) + ' 天前';
+      meta.textContent = timeStr + ' · ' + msgCount + ' 条消息';
+
+      var delBtn = document.createElement('button');
+      delBtn.className = 'session-delete';
+      delBtn.textContent = '×';
+      delBtn.onclick = (function(id, e) {
+        e.stopPropagation();
+        SessionManager.deleteSession(id);
+        renderSessionList();
+        var activeId = SessionManager.getActiveSessionId();
+        if (activeId) {
+          restoreSession(activeId);
+        } else {
+          SessionManager.createSession();
+          messagesEl.innerHTML = '';
+        }
+      })(s.id);
+
+      item.appendChild(title);
+      item.appendChild(meta);
+      item.appendChild(delBtn);
+
+      item.onclick = (function(id) {
+        return function() {
+          switchToSession(id);
+          closeDrawer();
+        };
+      })(s.id);
+
+      sessionListEl.appendChild(item);
+    }
+  }
+
+  function switchToSession(id) {
+    var session = SessionManager.getSession(id);
+    if (!session) return;
+
+    SessionManager.setActiveSessionId(id);
+    messagesEl.innerHTML = '';
+
+    for (var i = 0; i < session.messages.length; i++) {
+      var m = session.messages[i];
+      addMessage(m.content, m.role === 'user' ? 'user' : 'ai');
+    }
+    scrollToBottom();
+
+    if (session.claudeSessionId && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'switch_session', sessionId: session.claudeSessionId }));
+    }
+  }
+
+  function restoreSession(id) {
+    var session = SessionManager.getSession(id);
+    if (!session) return;
+
+    messagesEl.innerHTML = '';
+    for (var i = 0; i < session.messages.length; i++) {
+      var m = session.messages[i];
+      addMessage(m.content, m.role === 'user' ? 'user' : 'ai');
+    }
+    scrollToBottom();
+
+    if (session.claudeSessionId && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'switch_session', sessionId: session.claudeSessionId }));
+    }
+  }
+
   document.addEventListener('touchstart', initAudio, { once: true });
   document.addEventListener('click', initAudio, { once: true });
 
@@ -470,6 +590,14 @@
       e.preventDefault();
       sendMessage();
     }
+  });
+
+  menuBtn.addEventListener('click', openDrawer);
+  drawerOverlay.addEventListener('click', closeDrawer);
+  newSessionBtn.addEventListener('click', function() {
+    var session = SessionManager.createSession();
+    messagesEl.innerHTML = '';
+    closeDrawer();
   });
 
   setEnabled(false);
