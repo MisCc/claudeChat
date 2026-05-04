@@ -10,6 +10,7 @@
 <body>
   <div id="app">
     <header id="header">
+      <button id="menu-btn" class="menu-btn">&#9776;</button>
       <span class="title">Claude Chat</span>
       <span id="status" class="status">Connecting...</span>
     </header>
@@ -18,6 +19,16 @@
       <input type="text" id="msg-input" placeholder="Type a message..." autocomplete="off">
       <button id="send-btn">Send</button>
     </footer>
+  </div>
+  <div id="session-drawer" class="drawer hidden">
+    <div class="drawer-overlay" id="drawer-overlay"></div>
+    <div class="drawer-panel">
+      <div class="drawer-header">
+        <span class="drawer-title">会话列表</span>
+        <button id="new-session-btn" class="drawer-action">+</button>
+      </div>
+      <div id="session-list" class="session-list"></div>
+    </div>
   </div>
   <script src="app.js"></script>
 </body>
